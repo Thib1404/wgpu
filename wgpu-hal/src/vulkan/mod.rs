@@ -66,7 +66,8 @@ use memory::{MemoryAllocators, MemoryPool};
 
 use crate::vulkan::semaphore_list::{SemaphoreListMode, SemaphoreType};
 
-const MAX_TOTAL_ATTACHMENTS: usize = crate::MAX_COLOR_ATTACHMENTS * 2 + 1;
+/// Colors and their resolves, depth, and a fragment shading rate attachment.
+const MAX_TOTAL_ATTACHMENTS: usize = crate::MAX_COLOR_ATTACHMENTS * 2 + 2;
 
 #[derive(Clone, Debug)]
 pub struct Api;
@@ -611,6 +612,21 @@ struct RenderPassKey {
     multiview_mask: Option<NonZeroU32>,
     depth_read_only: bool,
     stencil_read_only: bool,
+    /// A fragment shading rate attachment of this texel size follows the others
+    /// (`VK_KHR_fragment_shading_rate`, `Device::set_fragment_shading_rate`).
+    shading_rate: Option<[u32; 2]>,
+}
+
+/// Foveated rendering through `VK_KHR_fragment_shading_rate`.
+#[derive(Default)]
+struct FragmentShadingRate {
+    /// The attachments' texel size, once enabled (`Device::enable_fragment_shading_rate`):
+    /// every render pipeline made after it has a twin for the passes with the attachment.
+    texel: Option<[u32; 2]>,
+    /// The attachment render passes of this extent get, until it is cleared.
+    current: Option<(IdentifiedTextureView, [u32; 2])>,
+    /// Every view given so far, each with its one identity.
+    views: Vec<IdentifiedTextureView>,
 }
 
 struct DeviceShared {
@@ -642,6 +658,9 @@ struct DeviceShared {
     texture_view_identity_factory: ResourceIdentityFactory<vk::ImageView>,
 
     empty_descriptor_set_layout: vk::DescriptorSetLayout,
+
+    /// The fragment shading rate attachment, when enabled.
+    fragment_shading_rate: Mutex<FragmentShadingRate>,
 
     // The `drop_guard` field must be the last field of this struct so it is dropped last.
     // Do not add new fields after it.
@@ -1232,6 +1251,10 @@ pub struct CommandEncoder {
     counters: Arc<wgt::HalCounters>,
 
     current_pipeline_is_multiview: bool,
+
+    /// The render pass begun has a fragment shading rate attachment: pipelines bind
+    /// their twin (`RenderPipeline::raw_shading_rate`).
+    shading_rate_pass: bool,
 }
 
 impl Drop for CommandEncoder {
@@ -1303,6 +1326,9 @@ impl crate::DynShaderModule for ShaderModule {}
 #[derive(Debug)]
 pub struct RenderPipeline {
     raw: vk::Pipeline,
+    /// The same pipeline for render passes with a fragment shading rate attachment
+    /// (a different pass is not compatible), taking its rate; null when not enabled.
+    raw_shading_rate: vk::Pipeline,
     is_multiview: bool,
 }
 
