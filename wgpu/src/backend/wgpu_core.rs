@@ -50,10 +50,14 @@ fn handle_error_fatal(cause: impl Error + WasmNotSendSync + 'static, operation: 
 }
 
 impl ContextWgpuCore {
-    pub unsafe fn from_hal_instance<A: hal::Api>(hal_instance: A::Instance) -> Self {
+    pub unsafe fn from_hal_instance<A: hal::Api>(
+        hal_instance: A::Instance,
+        flags: wgt::InstanceFlags,
+    ) -> Self {
         Self(wgc::instance::Instance::from_hal_instance::<A>(
             "wgpu".to_owned(),
             hal_instance,
+            flags,
         ))
     }
 

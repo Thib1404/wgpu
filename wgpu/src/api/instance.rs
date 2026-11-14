@@ -328,9 +328,22 @@ impl Instance {
     /// - wgpu will act like it has complete ownership of this instance, and will destroy it
     ///   when the last reference to the instance, internal or external, is dropped.
     pub unsafe fn from_hal<A: hal::Api>(hal_instance: A::Instance) -> Self {
+        unsafe { Self::from_hal_with_flags::<A>(hal_instance, InstanceFlags::default()) }
+    }
+
+    /// Like [`Instance::from_hal`], with the [`InstanceFlags`] that `wgpu-core` uses for this
+    /// instance, such as [`InstanceFlags::VALIDATION_INDIRECT_CALL`].
+    ///
+    /// # Safety
+    ///
+    /// Same as [`Instance::from_hal`].
+    pub unsafe fn from_hal_with_flags<A: hal::Api>(
+        hal_instance: A::Instance,
+        flags: InstanceFlags,
+    ) -> Self {
         Self {
             inner: unsafe {
-                crate::backend::ContextWgpuCore::from_hal_instance::<A>(hal_instance).into()
+                crate::backend::ContextWgpuCore::from_hal_instance::<A>(hal_instance, flags).into()
             },
         }
     }

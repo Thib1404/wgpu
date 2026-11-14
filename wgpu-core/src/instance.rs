@@ -139,13 +139,14 @@ impl Instance {
     pub fn from_hal_instance<A: hal::Api>(
         name: String,
         hal_instance: <A as hal::Api>::Instance,
+        flags: InstanceFlags,
     ) -> Arc<Self> {
         Arc::new(Self {
             _name: name,
             instance_per_backend: vec![(A::VARIANT, Box::new(hal_instance))],
             requested_backends: A::VARIANT.into(),
             supported_backends: A::VARIANT.into(),
-            flags: InstanceFlags::default(),
+            flags,
             display: None, // TODO: Extract display from HAL instance if available?
             devices: InstanceDevices::new(),
         })
