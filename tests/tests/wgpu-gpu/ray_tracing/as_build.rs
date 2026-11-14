@@ -17,6 +17,7 @@ pub fn all_tests(tests: &mut Vec<GpuTestInitializer>) {
         BLAS_COMPACTION,
         OUT_OF_ORDER_AS_BUILD,
         OUT_OF_ORDER_AS_BUILD_USE,
+        TLAS_BOUND_AGAIN_AFTER_BLAS_REBUILD,
         EMPTY_BUILD,
         BUILD_WITH_TRANSFORM,
         ONLY_BLAS_VERTEX_RETURN,
@@ -470,6 +471,94 @@ fn out_of_order_as_build_use(ctx: TestingContext) {
         &ctx.device,
         || {
             ctx.queue.submit(Some(encoder_compute.finish()));
+        },
+        None,
+    );
+}
+
+#[apply(gpu_test!)]
+static TLAS_BOUND_AGAIN_AFTER_BLAS_REBUILD: GpuTestConfiguration = GpuTestConfiguration::new()
+    .parameters(
+        TestParameters::default()
+            .test_features_limits()
+            .limits(acceleration_structure_limits())
+            .features(wgpu::Features::EXPERIMENTAL_RAY_QUERY),
+    )
+    .run_sync(tlas_bound_again_after_blas_rebuild);
+
+fn tlas_bound_again_after_blas_rebuild(ctx: TestingContext) {
+    let as_ctx = AsBuildContext::new(
+        &ctx,
+        AccelerationStructureFlags::empty(),
+        AccelerationStructureFlags::empty(),
+    );
+
+    let shader = ctx
+        .device
+        .create_shader_module(include_wgsl!("shader.wgsl"));
+    let compute_pipeline = ctx
+        .device
+        .create_compute_pipeline(&ComputePipelineDescriptor {
+            label: None,
+            layout: None,
+            module: &shader,
+            entry_point: Some("basic_usage"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+    let bind_group = ctx.device.create_bind_group(&BindGroupDescriptor {
+        label: None,
+        layout: &compute_pipeline.get_bind_group_layout(0),
+        entries: &[BindGroupEntry {
+            binding: 0,
+            resource: BindingResource::AccelerationStructure(&as_ctx.tlas),
+        }],
+    });
+    let use_tlas = |encoder: &mut wgpu::CommandEncoder| {
+        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+            label: None,
+            timestamp_writes: None,
+        });
+        pass.set_pipeline(&compute_pipeline);
+        pass.set_bind_group(0, Some(&bind_group), &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    };
+
+    let build = || {
+        let mut encoder = ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder.build_acceleration_structures([&as_ctx.blas_build_entry()], []);
+        let mut encoder_tlas = ctx
+            .device
+            .create_command_encoder(&CommandEncoderDescriptor::default());
+        encoder_tlas.build_acceleration_structures([], [&as_ctx.tlas]);
+        ctx.queue.submit(Some(encoder.finish()));
+        ctx.queue.submit(Some(encoder_tlas.finish()));
+    };
+
+    // The same TLAS bound by two passes of one encoder is valid.
+    build();
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    use_tlas(&mut encoder);
+    use_tlas(&mut encoder);
+    ctx.queue.submit(Some(encoder.finish()));
+
+    // Rebuilding the BLAS between the two passes makes the second use invalid, even though the
+    // first use of the TLAS in this encoder was valid.
+    build();
+    let mut encoder = ctx
+        .device
+        .create_command_encoder(&CommandEncoderDescriptor::default());
+    use_tlas(&mut encoder);
+    encoder.build_acceleration_structures([&as_ctx.blas_build_entry()], []);
+    use_tlas(&mut encoder);
+    fail(
+        &ctx.device,
+        || {
+            ctx.queue.submit(Some(encoder.finish()));
         },
         None,
     );

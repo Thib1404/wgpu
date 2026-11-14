@@ -537,9 +537,12 @@ impl CommandBufferMutable {
         command_index_guard: &mut RwLockWriteGuard<CommandIndices>,
     ) -> Result<(), ValidateAsActionsError> {
         profiling::scope!("CommandEncoder::[submission]::validate_as_actions");
+        // Between two builds, a TLAS bound by several passes only needs validating once.
+        let mut validated_tlas_s = Vec::<*const Tlas>::new();
         for action in &self.as_actions {
             match action {
                 AsAction::Build(build) => {
+                    validated_tlas_s.clear();
                     let build_command_index = NonZeroU64::new(
                         command_index_guard.next_acceleration_structure_build_command_index,
                     )
@@ -581,6 +584,10 @@ impl CommandBufferMutable {
                     }
                 }
                 AsAction::BindTlas(tlas) => {
+                    if validated_tlas_s.contains(&Arc::as_ptr(tlas)) {
+                        continue;
+                    }
+                    validated_tlas_s.push(Arc::as_ptr(tlas));
                     let tlas_build_index = tlas.built_index.read();
                     let dependencies = tlas.dependencies.read();
 
@@ -661,12 +668,18 @@ impl CommandBufferMutable {
     pub(crate) fn set_acceleration_structure_dependencies(&self, snatch_guard: &SnatchGuard) {
         profiling::scope!("CommandEncoder::[submission]::set_acceleration_structure_dependencies");
         let mut dependencies = Vec::new();
+        let mut listed_tlas_s = Vec::<*const Tlas>::new();
         for action in &self.as_actions {
             match action {
                 AsAction::Build(build) => {
+                    listed_tlas_s.clear();
                     dependencies.extend(build.blas_s_built.iter().map(Arc::clone));
                 }
                 AsAction::BindTlas(tlas) => {
+                    if listed_tlas_s.contains(&Arc::as_ptr(tlas)) {
+                        continue;
+                    }
+                    listed_tlas_s.push(Arc::as_ptr(tlas));
                     dependencies.extend(tlas.dependencies.read().iter().map(Arc::clone));
                 }
                 // Any tlas traced against must also be bound.
